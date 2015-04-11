@@ -1,3 +1,11 @@
+# laher’s note #
+
+This fork exists to remove some dependencies only.
+
+I created a Logger interface (with a simple default implementation, in place of glog), and removed the `main` package.
+
+---------------------------------------------------------------------------
+
 # imageproxy #
 
 imageproxy is a caching image proxy server written in golang.  It supports

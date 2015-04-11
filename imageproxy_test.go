@@ -160,6 +160,7 @@ func TestProxy_ServeHTTP(t *testing.T) {
 			Transport: testTransport{},
 		},
 		Whitelist: []string{"good.test"},
+		Logger:    DefaultLogger{},
 	}
 
 	tests := []struct {
@@ -192,6 +193,7 @@ func TestProxy_ServeHTTP_is304(t *testing.T) {
 		Client: &http.Client{
 			Transport: testTransport{},
 		},
+		Logger: DefaultLogger{},
 	}
 
 	req, _ := http.NewRequest("GET", "http://localhost/http://good.test/etag", nil)
@@ -209,7 +211,7 @@ func TestProxy_ServeHTTP_is304(t *testing.T) {
 
 func TestTransformingTransport(t *testing.T) {
 	client := new(http.Client)
-	tr := &TransformingTransport{testTransport{}, client}
+	tr := &TransformingTransport{testTransport{}, client, DefaultLogger{}}
 	client.Transport = tr
 
 	tests := []struct {

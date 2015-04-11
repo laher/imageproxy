@@ -14,7 +14,7 @@
 
 // Package imageproxy provides an image proxy server.  For typical use of
 // creating and using a Proxy, see cmd/imageproxy/main.go.
-package imageproxy // import "willnorris.com/go/imageproxy"
+package imageproxy
 
 import (
 	"bufio"
@@ -22,12 +22,12 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/golang/glog"
 	"github.com/gregjones/httpcache"
 )
 
@@ -43,6 +43,29 @@ type Proxy struct {
 	// Whitelist specifies a list of remote hosts that images can be
 	// proxied from.  An empty list means all hosts are allowed.
 	Whitelist []string
+	Logger
+}
+type Logger interface {
+	Error(msg string)
+	Errorf(msg string, args ...interface{})
+	Infof(msg string, args ...interface{})
+}
+
+type DefaultLogger struct {
+}
+
+func (dl DefaultLogger) Error(msg string) {
+	log.Printf("ERROR: %s", msg)
+}
+
+func (dl DefaultLogger) Errorf(msg string, args ...interface{}) {
+	emsg := fmt.Sprintf(msg, args)
+	log.Printf("ERROR: %s", emsg)
+}
+
+func (dl DefaultLogger) Infof(msg string, args ...interface{}) {
+	imsg := fmt.Sprintf(msg, args)
+	log.Printf("INFO: %s", imsg)
 }
 
 // NewProxy constructs a new proxy.  The provided http RoundTripper will be
@@ -58,7 +81,7 @@ func NewProxy(transport http.RoundTripper, cache Cache) *Proxy {
 
 	client := new(http.Client)
 	client.Transport = &httpcache.Transport{
-		Transport:           &TransformingTransport{transport, client},
+		Transport:           &TransformingTransport{transport, client, DefaultLogger{}},
 		Cache:               cache,
 		MarkCachedResponses: true,
 	}
@@ -66,6 +89,7 @@ func NewProxy(transport http.RoundTripper, cache Cache) *Proxy {
 	return &Proxy{
 		Client: client,
 		Cache:  cache,
+		Logger: DefaultLogger{},
 	}
 }
 
@@ -78,14 +102,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	req, err := NewRequest(r)
 	if err != nil {
 		msg := fmt.Sprintf("invalid request URL: %v", err)
-		glog.Error(msg)
+		p.Logger.Error(msg)
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
 
 	if !p.allowed(req.URL) {
 		msg := fmt.Sprintf("remote URL is not for an allowed host: %v", req.URL)
-		glog.Error(msg)
+		p.Logger.Error(msg)
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
@@ -98,18 +122,18 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := p.Client.Get(u)
 	if err != nil {
 		msg := fmt.Sprintf("error fetching remote image: %v", err)
-		glog.Error(msg)
+		p.Logger.Error(msg)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
 
 	cached := resp.Header.Get(httpcache.XFromCache)
-	glog.Infof("request: %v (served from cache: %v)", *req, cached == "1")
+	p.Logger.Infof("request: %v (served from cache: %v)", *req, cached == "1")
 
 	if resp.StatusCode != http.StatusOK {
 		msg := fmt.Sprintf("remote URL %q returned status: %v", req.URL, resp.Status)
-		glog.Error(msg)
+		p.Logger.Error(msg)
 		http.Error(w, msg, resp.StatusCode)
 		return
 	}
@@ -192,13 +216,15 @@ type TransformingTransport struct {
 	// used rather than Transport directly in order to ensure that
 	// responses are properly cached.
 	CachingClient *http.Client
+
+	Logger Logger
 }
 
 // RoundTrip implements the http.RoundTripper interface.
 func (t *TransformingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Fragment == "" {
 		// normal requests pass through
-		glog.Infof("fetching remote URL: %v", req.URL)
+		t.Logger.Infof("fetching remote URL: %v", req.URL)
 		return t.Transport.RoundTrip(req)
 	}
 
@@ -218,7 +244,7 @@ func (t *TransformingTransport) RoundTrip(req *http.Request) (*http.Response, er
 	opt := ParseOptions(req.URL.Fragment)
 	img, err := Transform(b, opt)
 	if err != nil {
-		glog.Errorf("error transforming image: %v", err)
+		t.Logger.Errorf("error transforming image: %v", err)
 		img = b
 	}
 
