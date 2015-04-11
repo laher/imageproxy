@@ -46,7 +46,7 @@ type Proxy struct {
 	Logger
 }
 type Logger interface {
-	Error(msg string)
+	Error(msg ...interface{})
 	Errorf(msg string, args ...interface{})
 	Infof(msg string, args ...interface{})
 }
@@ -54,7 +54,7 @@ type Logger interface {
 type DefaultLogger struct {
 }
 
-func (dl DefaultLogger) Error(msg string) {
+func (dl DefaultLogger) Error(msg ...interface{}) {
 	log.Printf("ERROR: %s", msg)
 }
 
