@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -49,6 +50,97 @@ func TestAllowed(t *testing.T) {
 			t.Errorf("allowed(%q) returned %v, want %v", u, got, want)
 		}
 	}
+}
+
+func TestIpRanges(t *testing.T) {
+
+	iprange := "127.0.0.1/8"
+	_, ipnet, err := net.ParseCIDR(iprange)
+
+	if err != nil {
+		t.Errorf("error when parsing cidr")
+		t.FailNow()
+	}
+
+	hostIpAddress := net.ParseIP("127.0.0.1")
+	if !ipnet.Contains(hostIpAddress) {
+		t.Errorf("ip doesnt contain a local host [%s]",hostIpAddress.String())
+
+	}
+}
+
+
+func TestUrlParse(t *testing.T) {
+	u, _ := url.Parse("http://10.0.0.5:8080/image")
+	
+	if u.Host != "10.0.0.5:8080" {
+		t.Errorf("host not expected [%s]",u.Host)
+		t.FailNow()
+	}
+	if !strings.Contains(u.Host, ":"){
+		t.Errorf("host not expected [%s]",u.Host)
+		t.FailNow()
+	}
+	
+	host,port,_ := net.SplitHostPort(u.Host)
+	if host != "10.0.0.5" {
+		t.Errorf("host not expected [%s]",host)
+		t.FailNow()
+	}
+	
+	if port != "8080" {
+		t.Errorf("port not expected [%s]",port)
+		t.FailNow()
+	}
+}
+
+
+
+func TestUrlParseNoPort(t *testing.T) {
+	u, _ := url.Parse("http://10.0.0.5/image")
+	
+	if u.Host != "10.0.0.5" {
+		t.Errorf("host not expected [%s]",u.Host)
+		t.FailNow()
+	}
+	if strings.Contains(u.Host, ":"){
+		t.Errorf("not expected [%s]",u.Host)
+		t.FailNow()
+	}
+	
+}
+
+func TestBlackList(t *testing.T) {
+	blacklist := []string{"127.0.0.0/8","10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16 ","test "}
+
+	tests := []struct {
+		url       string
+		blacklist []string
+		allowed   bool
+	}{
+		{"http://127.0.0.2/foo/image", blacklist, false},
+		{"http://foo/image", blacklist, true},
+		{"http://10.0.0.5:8080/image", blacklist, false},
+		{"http://10.0.0.5:8080/image", nil, true},
+		{"http://192.168.0.1/image", blacklist, false},
+		{"http://localhost/image", blacklist, false},
+	}
+
+	for _, tt := range tests {
+		p := NewProxy(nil, nil)
+		p.Blacklist = tt.blacklist
+
+		u, err := url.Parse(tt.url)
+		if err != nil {
+			t.Errorf("error parsing url %q: %v", tt.url, err)
+			t.FailNow()
+		}
+		if got, want := p.allowed(u), tt.allowed; got != want {
+			t.Errorf("allowed(%q) returned %v, want %v", u, got, want)
+			t.FailNow()
+		}
+	}
+
 }
 
 func TestCheck304(t *testing.T) {

@@ -23,6 +23,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/gregjones/httpcache"
 )
+type ImageResponseType string
 
 // Proxy serves image requests.
 //
@@ -43,6 +45,14 @@ type Proxy struct {
 	// Whitelist specifies a list of remote hosts that images can be
 	// proxied from.  An empty list means all hosts are allowed.
 	Whitelist []string
+	// Blacklist specifies a list of remote hosts that images can't be
+	// proxied from.  An empty list means all hosts are allowed.
+	Blacklist []string
+	
+	
+	// AllowedReponseTypes specifies a list of allowed http response times
+	AllowedReponseContentTypes []string
+	
 	Logger
 }
 type Logger interface {
@@ -128,6 +138,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	contentType := resp.Header.Get("Content-Type")
+	if !p.isResponseContentTypeAllowed(contentType){
+		http.Error(w, "Response type not allowed", http.StatusBadRequest)
+		return
+	}
+
+
 	cached := resp.Header.Get(httpcache.XFromCache)
 	p.Logger.Infof("request: %v (served from cache: %v)", *req, cached == "1")
 
@@ -159,22 +176,74 @@ func copyHeader(w http.ResponseWriter, r *http.Response, header string) {
 	}
 }
 
+func (p *Proxy) isResponseContentTypeAllowed(responseType string) bool {
+	responseType = strings.TrimSpace(responseType)
+	if len(p.AllowedReponseContentTypes) > 0 && responseType != ""{
+		for _, contentType := range p.AllowedReponseContentTypes{
+			contentType = strings.TrimSpace(contentType)
+	
+			if contentType == responseType {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
 // allowed returns whether the specified URL is on the whitelist of remote hosts.
 func (p *Proxy) allowed(u *url.URL) bool {
-	if len(p.Whitelist) == 0 {
-		return true
+	if len(p.Whitelist) != 0 {
+		for _, host := range p.Whitelist {
+			if u.Host == host {
+				return true
+			}
+			if strings.HasPrefix(host, "*.") && strings.HasSuffix(u.Host, host[2:]) {
+				return true
+			}
+		}
+		return false
 	}
 
-	for _, host := range p.Whitelist {
-		if u.Host == host {
-			return true
-		}
-		if strings.HasPrefix(host, "*.") && strings.HasSuffix(u.Host, host[2:]) {
-			return true
+	if len(p.Blacklist) != 0 {
+
+		for _, iprange := range p.Blacklist {
+			iprange := strings.TrimSpace(iprange)
+			_, ipnet, err := net.ParseCIDR(iprange)
+			
+			if err!=nil{
+				p.Logger.Errorf("Error when reading the blacklist element [%s]. Error [%s] ",iprange,err.Error())
+				continue
+			}
+			
+			var hostIpAddress net.IP
+			
+			host := u.Host
+			
+			if host == "localhost"{
+				host = "127.0.0.1"
+			}
+			
+			if !strings.Contains(host,":"){
+				hostIpAddress = net.ParseIP(host)
+			}else{
+				h,_,err := net.SplitHostPort(host)
+				
+				if err !=nil {
+					return false
+				}
+				
+				hostIpAddress = net.ParseIP(h)
+			}
+			
+			
+			if ipnet.Contains(hostIpAddress) {
+				return false
+			}
 		}
 	}
 
-	return false
+	return true
 }
 
 // check304 checks whether we should send a 304 Not Modified in response to
