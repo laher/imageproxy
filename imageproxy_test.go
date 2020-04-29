@@ -210,7 +210,7 @@ func TestCheck304(t *testing.T) {
 			t.Errorf("http.ReadResponse(%q) returned error: %v", tt.resp, err)
 		}
 
-		if got, want := check304(req, resp), tt.is304; got != want {
+		if got, want := check304(req, resp.Header), tt.is304; got != want {
 			t.Errorf("check304(%q, %q) returned: %v, want %v", tt.req, tt.resp, got, want)
 		}
 	}

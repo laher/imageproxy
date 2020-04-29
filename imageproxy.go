@@ -20,7 +20,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -54,6 +53,8 @@ type Proxy struct {
 	AllowedReponseContentTypes []string
 
 	Logger
+
+	ImageFetcher ImageFetcher
 }
 type Logger interface {
 	Error(msg ...interface{})
@@ -97,14 +98,24 @@ func NewProxy(transport http.RoundTripper, cache Cache) *Proxy {
 	}
 
 	return &Proxy{
-		Client: client,
-		Cache:  cache,
-		Logger: DefaultLogger{},
+		Client:       client,
+		Cache:        cache,
+		Logger:       DefaultLogger{},
+		ImageFetcher: NewImageProxyGroupcache(ModelGroupCacheSizeDefault, ModelGroupCacheWindowDefault),
 	}
 }
 
 // ServeHTTP handles image requests.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	p.serveImage(w, r, false)
+}
+
+// ServeHTTPWithCache handles image requests and caches images.
+func (p *Proxy) ServeHTTPWithCache(w http.ResponseWriter, r *http.Request) {
+	p.serveImage(w, r, true)
+}
+
+func (p *Proxy) serveImage(w http.ResponseWriter, r *http.Request, useCache bool) {
 	req, err := NewRequest(r)
 	if err != nil {
 		msg := fmt.Sprintf("invalid request URL: %v", err)
@@ -125,15 +136,42 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		u += "#" + req.Options.String()
 	}
 
-	resp, err := p.Client.Get(u)
-	if err != nil {
-		msg := fmt.Sprintf("error fetching remote image: %v", err)
-		p.Logger.Error(msg)
-		http.Error(w, msg, http.StatusInternalServerError)
-		return
-	}
-	defer resp.Body.Close()
+	var resp *CacheResponse
+	if useCache {
+		resp, err = p.ImageFetcher.GetImageByURL(u)
 
+		if err != nil {
+			msg := fmt.Sprintf("error fetching image from cache: %v", err)
+			p.Logger.Error(msg)
+			http.Error(w, msg, http.StatusInternalServerError)
+			return
+		}
+	} else {
+		result, err := p.Client.Get(u)
+
+		if err != nil {
+			msg := fmt.Sprintf("error fetching remote image: %v", err)
+			p.Logger.Error(msg)
+			http.Error(w, msg, http.StatusInternalServerError)
+			return
+		}
+
+		defer result.Body.Close()
+		body, err := ioutil.ReadAll(result.Body)
+
+		if err != nil {
+			msg := fmt.Sprintf("error reading data from http response: %v", err)
+			p.Logger.Error(msg)
+			http.Error(w, msg, http.StatusInternalServerError)
+			return
+		}
+
+		resp = &CacheResponse{Status: result.Status, StatusCode: result.StatusCode, Header: result.Header, Body: body}
+	}
+	p.writeResponse(resp, w, r, req)
+}
+
+func (p *Proxy) writeResponse(resp *CacheResponse, w http.ResponseWriter, r *http.Request, req *Request) {
 	contentType := resp.Header.Get("Content-Type")
 	if !p.isResponseContentTypeAllowed(contentType) {
 		http.Error(w, "Response type not allowed <"+contentType+">", http.StatusBadRequest)
@@ -150,23 +188,24 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	copyHeader(w, resp, "Last-Modified")
-	copyHeader(w, resp, "Expires")
-	copyHeader(w, resp, "Etag")
+	copyHeader(w, resp.Header, "Last-Modified")
+	copyHeader(w, resp.Header, "Expires")
+	copyHeader(w, resp.Header, "Etag")
 
-	if is304 := check304(r, resp); is304 {
+	if is304 := check304(r, resp.Header); is304 {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 
-	copyHeader(w, resp, "Content-Length")
-	copyHeader(w, resp, "Content-Type")
-	io.Copy(w, resp.Body)
+	copyHeader(w, resp.Header, "Content-Length")
+	copyHeader(w, resp.Header, "Content-Type")
+
+	w.Write(resp.Body)
 }
 
-func copyHeader(w http.ResponseWriter, r *http.Response, header string) {
+func copyHeader(w http.ResponseWriter, headers http.Header, header string) {
 	key := http.CanonicalHeaderKey(header)
-	if value, ok := r.Header[key]; ok {
+	if value, ok := headers[key]; ok {
 		w.Header()[key] = value
 	}
 }
@@ -243,16 +282,16 @@ func (p *Proxy) allowed(u *url.URL) bool {
 // check304 checks whether we should send a 304 Not Modified in response to
 // req, based on the response resp.  This is determined using the last modified
 // time and the entity tag of resp.
-func check304(req *http.Request, resp *http.Response) bool {
+func check304(req *http.Request, headers http.Header) bool {
 	// TODO(willnorris): if-none-match header can be a comma separated list
 	// of multiple tags to be matched, or the special value "*" which
 	// matches all etags
-	etag := resp.Header.Get("Etag")
+	etag := headers.Get("Etag")
 	if etag != "" && etag == req.Header.Get("If-None-Match") {
 		return true
 	}
 
-	lastModified, err := time.Parse(time.RFC1123, resp.Header.Get("Last-Modified"))
+	lastModified, err := time.Parse(time.RFC1123, headers.Get("Last-Modified"))
 	if err != nil {
 		return false
 	}
