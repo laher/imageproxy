@@ -259,7 +259,7 @@ func TestProxy_ServeHTTP(t *testing.T) {
 		url  string // request URL
 		code int    // expected response status code
 	}{
-		{"/favicon.ico", http.StatusOK},
+		{"/favicon.ico", http.StatusBadRequest},
 		{"//foo", http.StatusBadRequest},                            // invalid request URL
 		{"/http://bad.test/", http.StatusBadRequest},                // Disallowed host
 		{"/http://good.test/error", http.StatusInternalServerError}, // HTTP protocol error
