@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -69,13 +70,15 @@ func (dl DefaultLogger) Error(msg ...interface{}) {
 	log.Printf("ERROR: %s", msg)
 }
 
+// Errorf ..
 func (dl DefaultLogger) Errorf(msg string, args ...interface{}) {
-	emsg := fmt.Sprintf(msg, args)
+	emsg := fmt.Sprintf(msg, args...)
 	log.Printf("ERROR: %s", emsg)
 }
 
+// Infof ..
 func (dl DefaultLogger) Infof(msg string, args ...interface{}) {
-	imsg := fmt.Sprintf(msg, args)
+	imsg := fmt.Sprintf(msg, args...)
 	log.Printf("INFO: %s", imsg)
 }
 
@@ -157,7 +160,8 @@ func (p *Proxy) serveImage(w http.ResponseWriter, r *http.Request, useCache bool
 		}
 
 		defer result.Body.Close()
-		body, err := ioutil.ReadAll(result.Body)
+		body := new(bytes.Buffer)
+		io.Copy(body, result.Body)
 
 		if err != nil {
 			msg := fmt.Sprintf("error reading data from http response: %v", err)
@@ -166,7 +170,7 @@ func (p *Proxy) serveImage(w http.ResponseWriter, r *http.Request, useCache bool
 			return
 		}
 
-		resp = &CacheResponse{Status: result.Status, StatusCode: result.StatusCode, Header: result.Header, Body: body}
+		resp = &CacheResponse{Status: result.Status, StatusCode: result.StatusCode, Header: result.Header, Body: body.Bytes()}
 	}
 	p.writeResponse(resp, w, r, req)
 }
@@ -200,7 +204,7 @@ func (p *Proxy) writeResponse(resp *CacheResponse, w http.ResponseWriter, r *htt
 	copyHeader(w, resp.Header, "Content-Length")
 	copyHeader(w, resp.Header, "Content-Type")
 
-	w.Write(resp.Body)
+	io.Copy(w, bytes.NewBuffer(resp.Body))
 }
 
 func copyHeader(w http.ResponseWriter, headers http.Header, header string) {

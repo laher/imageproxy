@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -64,12 +64,10 @@ func NewImageProxyGroupcache(cacheSize int64, cacheWindow time.Duration) *ImageP
 			}
 
 			defer resp.Body.Close()
-			body, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				return err
-			}
+			body := new(bytes.Buffer)
+			io.Copy(body, resp.Body)
 
-			cResponse := &CacheResponse{Status: resp.Status, StatusCode: resp.StatusCode, Header: resp.Header, Body: body}
+			cResponse := &CacheResponse{Status: resp.Status, StatusCode: resp.StatusCode, Header: resp.Header, Body: body.Bytes()}
 			w := new(bytes.Buffer)
 			enc := gob.NewEncoder(w)
 			err = enc.Encode(cResponse)
